@@ -39,13 +39,16 @@ def health():
 def get_tasks():
     return tasks
 
-@app.get("/tasks/{task_id}")
-def get_task(task_id: int):
-    for task in tasks:
-        if task["id"] == task_id:
-            return task
-    raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+from typing import Optional
 
+@app.get("/tasks")
+def get_tasks(done: Optional[bool] = None, search: Optional[str] = None):
+    result = tasks
+    if done is not None:
+        result = [t for t in result if t["done"] == done]
+    if search:
+        result = [t for t in result if search.lower() in t["title"].lower()]
+    return result
 @app.post("/tasks", status_code=201)
 def create_task(task: TaskCreate):
     if not task.title or not task.title.strip():
@@ -78,10 +81,24 @@ def delete_task(task_id: int):
             return
     raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
+def get_seed_tasks():
+    return [
+        {"id": 1, "title": "Buy milk", "done": False},
+        {"id": 2, "title": "Walk the dog", "done": False},
+        {"id": 3, "title": "Write README", "done": True},
+    ]
 
-python
+tasks = get_seed_tasks()
 @app.get("/stats")
 def get_stats():
     total = len(tasks)
     done = len([t for t in tasks if t["done"]])
     return {"total": total, "done": done, "open": total - done}
+
+
+
+@app.post("/reset")
+def reset_tasks():
+    global tasks
+    tasks = get_seed_tasks()
+    return {"message": "Tasks reset", "tasks": tasks}
