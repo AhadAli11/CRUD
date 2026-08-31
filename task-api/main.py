@@ -14,7 +14,7 @@ class TaskUpdate(BaseModel):
 
 
 
-app = FastAPI(title="Task API", version="1.0")
+app = FastAPI(title="Task API", version="1.0", description="A simple to-do list API built for FlyRank W2·A1")
 
 # Makes every error come back as {"error": "..."} instead of FastAPI's default {"detail": "..."}
 @app.exception_handler(StarletteHTTPException)
