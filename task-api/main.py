@@ -129,3 +129,24 @@ def delete_task(task_id: int):
     conn.commit()
     conn.close()
 
+
+@app.get("/stats")
+def get_stats():
+    conn = get_db()
+    total = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+    done = conn.execute("SELECT COUNT(*) FROM tasks WHERE done = 1").fetchone()[0]
+    conn.close()
+    return {"total": total, "done": done, "open": total - done}
+
+
+@app.post("/reset")
+def reset_tasks():
+    conn = get_db()
+    conn.execute("DELETE FROM tasks")
+    conn.execute("INSERT INTO tasks (title, done) VALUES (?, ?)", ("Buy milk", 0))
+    conn.execute("INSERT INTO tasks (title, done) VALUES (?, ?)", ("Walk the dog", 0))
+    conn.execute("INSERT INTO tasks (title, done) VALUES (?, ?)", ("Write README", 1))
+    conn.commit()
+    rows = conn.execute("SELECT * FROM tasks").fetchall()
+    conn.close()
+
