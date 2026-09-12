@@ -7,6 +7,7 @@ import os
 import psycopg
 from psycopg.rows import dict_row
 from dotenv import load_dotenv
+from supabase import create_client, Client
 
 class TaskCreate(BaseModel):
     title: Optional[str] = None
@@ -24,6 +25,13 @@ async def http_exception_handler(request, exc):
 
 load_dotenv()
 DATABASE_URL = os.environ["DATABASE_URL"]
+
+
+SUPABASE_URL = os.environ["SUPABASE_URL"]
+SUPABASE_KEY = os.environ["SUPABASE_KEY"]
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+print("Server running and connected to Supabase")
 
 def get_db():
     return psycopg.connect(DATABASE_URL, row_factory=dict_row)
@@ -55,7 +63,7 @@ def init_db():
         conn.execute("INSERT INTO tasks (title, done) VALUES (%s, %s)", ("Write README", True))
     conn.commit()
     conn.close()
-    
+
 @app.get("/")
 def root():
     return {"name": "Task API", "version": "1.0", "endpoints": ["/tasks"]}
