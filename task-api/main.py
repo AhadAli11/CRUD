@@ -9,6 +9,9 @@ from psycopg.rows import dict_row
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
+from fastapi import FastAPI, HTTPException, Request
+
+
 class TaskCreate(BaseModel):
     title: Optional[str] = None
 
@@ -209,3 +212,18 @@ def login(credentials: AuthCredentials):
         }
     except Exception as e:
         raise HTTPException(status_code=401, detail="Invalid login credentials")
+
+    
+@app.get("/public/info")
+def public_info():
+    return {"message": "Welcome stranger! This info is public."}
+
+
+@app.get("/protected/profile")
+def protected_profile(request: Request):
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Access token required")
+    token = auth_header.split(" ")[1]
+    # Not verifying yet — Stage 3 adds that
+    return {"message": "token received, not yet verified"}
