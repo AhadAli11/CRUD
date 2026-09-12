@@ -225,5 +225,18 @@ def protected_profile(request: Request):
     if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Access token required")
     token = auth_header.split(" ")[1]
-    # Not verifying yet — Stage 3 adds that
-    return {"message": "token received, not yet verified"}
+
+    try:
+        user_response = supabase.auth.get_user(token)
+        user = user_response.user
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    return {
+        "id": user.id,
+        "email": user.email,
+        "created_at": user.created_at
+    }
