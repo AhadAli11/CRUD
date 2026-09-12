@@ -63,6 +63,7 @@ def init_db():
         conn.execute("INSERT INTO tasks (title, done) VALUES (%s, %s)", ("Write README", True))
     conn.commit()
     conn.close()
+    init_db()
 
 @app.get("/")
 def root():
@@ -171,3 +172,40 @@ def reset_tasks():
     rows = conn.execute("SELECT * FROM tasks").fetchall()
     conn.close()
     return {"message": "Tasks reset", "tasks": rows}
+
+
+
+class AuthCredentials(BaseModel):
+    email: Optional[str] = None
+    password: Optional[str] = None
+
+
+@app.post("/auth/signup", status_code=201)
+def signup(credentials: AuthCredentials):
+    if not credentials.email or not credentials.password:
+        raise HTTPException(status_code=400, detail="email and password are required")
+    try:
+        result = supabase.auth.sign_up({
+            "email": credentials.email,
+            "password": credentials.password
+        })
+        return result.user.model_dump()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/auth/login")
+def login(credentials: AuthCredentials):
+    if not credentials.email or not credentials.password:
+        raise HTTPException(status_code=400, detail="email and password are required")
+    try:
+        result = supabase.auth.sign_in_with_password({
+            "email": credentials.email,
+            "password": credentials.password
+        })
+        return {
+            "access_token": result.session.access_token,
+            "refresh_token": result.session.refresh_token
+        }
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="Invalid login credentials")
