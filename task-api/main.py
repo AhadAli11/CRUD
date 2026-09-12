@@ -22,7 +22,9 @@ class AuthCredentials(BaseModel):
     email: Optional[str] = None
     password: Optional[str] = None
 
+from fastapi.security import HTTPBearer
 
+security_scheme = HTTPBearer()
 app = FastAPI(title="Task API", version="1.0", description="A simple to-do list API built for FlyRank W2/W3")
 
 @app.exception_handler(StarletteHTTPException)
@@ -236,7 +238,7 @@ def public_info():
 
 
 @app.get("/protected/profile")
-def protected_profile(user_and_token: tuple = Depends(get_current_user)):
+def protected_profile(user_and_token: tuple = Depends(get_current_user), _: str = Depends(security_scheme)):
     user, token = user_and_token
     return {
         "id": user.id,
@@ -246,12 +248,12 @@ def protected_profile(user_and_token: tuple = Depends(get_current_user)):
 
 
 @app.post("/auth/logout", status_code=204)
-def logout(user_and_token: tuple = Depends(get_current_user)):
+def logout(user_and_token: tuple = Depends(get_current_user), _: str = Depends(security_scheme)):
     user, token = user_and_token
     supabase.auth.sign_out()
 
 
 @app.get("/protected/dashboard")
-def protected_dashboard(user_and_token: tuple = Depends(get_current_user)):
+def protected_dashboard(user_and_token: tuple = Depends(get_current_user), _: str = Depends(security_scheme)):
     user, token = user_and_token
     return {"message": f"Welcome to your dashboard, {user.email}"}
