@@ -1,15 +1,14 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel
 from typing import Optional
 import os
+import time
 import psycopg
 from psycopg.rows import dict_row
 from dotenv import load_dotenv
 from supabase import create_client, Client
-
-from fastapi import FastAPI, HTTPException, Request
 
 
 class TaskCreate(BaseModel):
@@ -18,6 +17,11 @@ class TaskCreate(BaseModel):
 class TaskUpdate(BaseModel):
     title: Optional[str] = None
     done: Optional[bool] = None
+
+class AuthCredentials(BaseModel):
+    email: Optional[str] = None
+    password: Optional[str] = None
+
 
 app = FastAPI(title="Task API", version="1.0", description="A simple to-do list API built for FlyRank W2/W3")
 
@@ -28,18 +32,16 @@ async def http_exception_handler(request, exc):
 
 load_dotenv()
 DATABASE_URL = os.environ["DATABASE_URL"]
-
-
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 print("Server running and connected to Supabase")
 
+
 def get_db():
     return psycopg.connect(DATABASE_URL, row_factory=dict_row)
 
-import time
 
 def init_db():
     for attempt in range(10):
@@ -66,7 +68,27 @@ def init_db():
         conn.execute("INSERT INTO tasks (title, done) VALUES (%s, %s)", ("Write README", True))
     conn.commit()
     conn.close()
-    init_db()
+
+init_db()  # <-- called once here, at module level, not inside itself
+
+
+def get_current_user(request: Request):
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Access token required")
+    token = auth_header.split(" ")[1]
+
+    try:
+        user_response = supabase.auth.get_user(token)
+        user = user_response.user
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    return user, token
+
 
 @app.get("/")
 def root():
@@ -177,12 +199,6 @@ def reset_tasks():
     return {"message": "Tasks reset", "tasks": rows}
 
 
-
-class AuthCredentials(BaseModel):
-    email: Optional[str] = None
-    password: Optional[str] = None
-
-
 @app.post("/auth/signup", status_code=201)
 def signup(credentials: AuthCredentials):
     if not credentials.email or not credentials.password:
@@ -213,30 +229,29 @@ def login(credentials: AuthCredentials):
     except Exception as e:
         raise HTTPException(status_code=401, detail="Invalid login credentials")
 
-    
+
 @app.get("/public/info")
 def public_info():
     return {"message": "Welcome stranger! This info is public."}
 
 
 @app.get("/protected/profile")
-def protected_profile(request: Request):
-    auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Access token required")
-    token = auth_header.split(" ")[1]
-
-    try:
-        user_response = supabase.auth.get_user(token)
-        user = user_response.user
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-
-    if user is None:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-
+def protected_profile(user_and_token: tuple = Depends(get_current_user)):
+    user, token = user_and_token
     return {
         "id": user.id,
         "email": user.email,
         "created_at": user.created_at
     }
+
+
+@app.post("/auth/logout", status_code=204)
+def logout(user_and_token: tuple = Depends(get_current_user)):
+    user, token = user_and_token
+    supabase.auth.sign_out()
+
+
+@app.get("/protected/dashboard")
+def protected_dashboard(user_and_token: tuple = Depends(get_current_user)):
+    user, token = user_and_token
+    return {"message": f"Welcome to your dashboard, {user.email}"}
