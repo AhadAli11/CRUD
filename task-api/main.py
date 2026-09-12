@@ -28,8 +28,19 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 def get_db():
     return psycopg.connect(DATABASE_URL, row_factory=dict_row)
 
+import time
+
 def init_db():
-    conn = get_db()
+    for attempt in range(10):
+        try:
+            conn = get_db()
+            break
+        except psycopg.OperationalError:
+            print(f"Database not ready yet, retrying... ({attempt + 1}/10)")
+            time.sleep(2)
+    else:
+        raise RuntimeError("Could not connect to database after 10 attempts")
+
     conn.execute("""
         CREATE TABLE IF NOT EXISTS tasks (
             id SERIAL PRIMARY KEY,
@@ -44,10 +55,7 @@ def init_db():
         conn.execute("INSERT INTO tasks (title, done) VALUES (%s, %s)", ("Write README", True))
     conn.commit()
     conn.close()
-
-init_db()
-
-
+    
 @app.get("/")
 def root():
     return {"name": "Task API", "version": "1.0", "endpoints": ["/tasks"]}
