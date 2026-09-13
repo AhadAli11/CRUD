@@ -1,14 +1,30 @@
 import os
 import time
+import json
 from datetime import datetime, timezone
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
+from pydantic import BaseModel, ValidationError, HttpUrl
+from typing import Optional
 
 CACHE_DIR = "cache"
+OUTPUT_DIR = "output"
 USER_AGENT = "FlyRankInternshipA9/1.0 (+https://github.com/AhadAli11/CRUD)"
 TIMEOUT = 10
 DELAY = 0.5
+
+
+class BookRecord(BaseModel):
+    title: str
+    product_url: HttpUrl
+    price_text: str
+    price_gbp: float
+    availability_text: str
+    rating_text: Optional[str] = None
+    description: Optional[str] = None
+    source_page: HttpUrl
+    fetched_at: str
 
 
 def fetch(url, cache_filename):
@@ -27,7 +43,7 @@ def fetch(url, cache_filename):
     if response.status_code != 200:
         raise Exception(f"Failed to fetch {url}: status {response.status_code}")
 
-    response.encoding = "utf-8"  # force correct decoding instead of requests' guess
+    response.encoding = "utf-8"
     html = response.text
     with open(cache_path, "w", encoding="utf-8") as f:
         f.write(html)
@@ -52,7 +68,7 @@ def discover_catalogue_pages(max_pages=3):
             link = article.select_one("h3 a")
             if link and link.get("href"):
                 absolute_url = urljoin(current_url, link["href"])
-                all_book_urls.append((absolute_url, current_url))  # keep source_page too
+                all_book_urls.append((absolute_url, current_url))
 
         if page_num == max_pages:
             break
@@ -75,8 +91,13 @@ def discover_catalogue_pages(max_pages=3):
 
 
 def slugify_for_cache(url):
-    """Turn a book URL into a safe cache filename."""
     return url.rstrip("/").split("/")[-2] + ".html"
+
+
+def parse_price(price_text):
+    """Turn '£51.77' into 51.77. Strips any currency symbol, keeps only digits and the decimal point."""
+    cleaned = "".join(c for c in price_text if c.isdigit() or c == ".")
+    return float(cleaned)
 
 
 def extract_book(url, source_page):
@@ -103,6 +124,7 @@ def extract_book(url, source_page):
         "title": title,
         "product_url": url,
         "price_text": price_text,
+        "price_gbp": parse_price(price_text),
         "availability_text": availability_text,
         "rating_text": rating_text,
         "description": description,
@@ -112,14 +134,29 @@ def extract_book(url, source_page):
 
 
 def main():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
     book_urls = discover_catalogue_pages()
 
-    records = []
-    for url, source_page in book_urls:
-        record = extract_book(url, source_page)
-        records.append(record)
+    valid_records = []
+    invalid_records = []
 
-    print(f"detail_pages={len(records)}")
-    sample = records[0].copy()
-    sample["description"] = (sample["description"][:100] + "...") if sample["description"] else None
-    print(sample)
+    for url, source_page in book_urls:
+        raw = extract_book(url, source_page)
+        try:
+            validated = BookRecord(**raw)
+            # store back as plain dict, with HttpUrl converted to plain str for clean JSON
+            valid_records.append(json.loads(validated.model_dump_json()))
+        except ValidationError as e:
+            invalid_records.append({"record": raw, "reason": str(e)})
+
+    with open(os.path.join(OUTPUT_DIR, "books.json"), "w", encoding="utf-8") as f:
+        json.dump(valid_records, f, indent=2, ensure_ascii=False)
+
+    with open(os.path.join(OUTPUT_DIR, "errors.json"), "w", encoding="utf-8") as f:
+        json.dump(invalid_records, f, indent=2, ensure_ascii=False)
+
+    print(f"valid_records={len(valid_records)} invalid_records={len(invalid_records)}")
+
+
+if __name__ == "__main__":
+    main()
