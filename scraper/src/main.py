@@ -14,6 +14,8 @@ USER_AGENT = "FlyRankInternshipA9/1.0 (+https://github.com/AhadAli11/CRUD)"
 TIMEOUT = 10
 DELAY = 0.5
 
+# Set to True to test failure handling with one fake URL — see Stage 5 checkpoint
+INJECT_FAKE_URL = False
 
 class BookRecord(BaseModel):
     title: str
@@ -27,7 +29,16 @@ class BookRecord(BaseModel):
     fetched_at: str
 
 
-def fetch(url, cache_filename):
+class FetchError(Exception):
+    """Raised when a page could not be fetched, after any retries."""
+    def __init__(self, url, status_code=None, reason=""):
+        self.url = url
+        self.status_code = status_code
+        self.reason = reason
+        super().__init__(f"{reason} (url={url}, status={status_code})")
+
+
+def fetch(url, cache_filename, allow_retry=True):
     os.makedirs(CACHE_DIR, exist_ok=True)
     cache_path = os.path.join(CACHE_DIR, cache_filename)
 
@@ -38,10 +49,28 @@ def fetch(url, cache_filename):
         return html
 
     headers = {"User-Agent": USER_AGENT}
-    response = requests.get(url, headers=headers, timeout=TIMEOUT)
 
+    try:
+        response = requests.get(url, headers=headers, timeout=TIMEOUT)
+    except requests.exceptions.RequestException as e:
+        if allow_retry:
+            print(f"RETRY (network error): {url}")
+            time.sleep(1)
+            return fetch(url, cache_filename, allow_retry=False)
+        raise FetchError(url, reason=f"network error: {e}")
+
+    if response.status_code == 404:
+        raise FetchError(url, status_code=404, reason="page not found")
+    if response.status_code == 403:
+        raise FetchError(url, status_code=403, reason="access forbidden")
+    if response.status_code >= 500:
+        if allow_retry:
+            print(f"RETRY (server error {response.status_code}): {url}")
+            time.sleep(1)
+            return fetch(url, cache_filename, allow_retry=False)
+        raise FetchError(url, status_code=response.status_code, reason="server error after retry")
     if response.status_code != 200:
-        raise Exception(f"Failed to fetch {url}: status {response.status_code}")
+        raise FetchError(url, status_code=response.status_code, reason="unexpected status")
 
     response.encoding = "utf-8"
     html = response.text
@@ -86,6 +115,11 @@ def discover_catalogue_pages(max_pages=3):
             seen.add(url)
             unique.append((url, source))
 
+    if INJECT_FAKE_URL:
+        fake_url = "https://books.toscrape.com/catalogue/this-book-does-not-exist_9999/index.html"
+        unique.append((fake_url, current_url))
+        print(f"[TEST MODE] injected fake URL: {fake_url}")
+
     print(f"catalogue_pages={page_num} discovered={len(all_book_urls)} unique_urls={len(unique)}")
     return unique
 
@@ -95,7 +129,6 @@ def slugify_for_cache(url):
 
 
 def parse_price(price_text):
-    """Turn '£51.77' into 51.77. Strips any currency symbol, keeps only digits and the decimal point."""
     cleaned = "".join(c for c in price_text if c.isdigit() or c == ".")
     return float(cleaned)
 
@@ -134,17 +167,27 @@ def extract_book(url, source_page):
 
 
 def main():
+    start_time = datetime.now(timezone.utc)
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    cache_hits_before = len(os.listdir(CACHE_DIR)) if os.path.exists(CACHE_DIR) else 0
+
     book_urls = discover_catalogue_pages()
 
     valid_records = []
     invalid_records = []
+    failed_pages = []
 
     for url, source_page in book_urls:
-        raw = extract_book(url, source_page)
+        try:
+            raw = extract_book(url, source_page)
+        except FetchError as e:
+            print(f"SKIPPED (fetch failed): {e.url} — {e.reason}")
+            failed_pages.append({"url": e.url, "status_code": e.status_code, "reason": e.reason})
+            continue
+
         try:
             validated = BookRecord(**raw)
-            # store back as plain dict, with HttpUrl converted to plain str for clean JSON
             valid_records.append(json.loads(validated.model_dump_json()))
         except ValidationError as e:
             invalid_records.append({"record": raw, "reason": str(e)})
@@ -155,7 +198,24 @@ def main():
     with open(os.path.join(OUTPUT_DIR, "errors.json"), "w", encoding="utf-8") as f:
         json.dump(invalid_records, f, indent=2, ensure_ascii=False)
 
-    print(f"valid_records={len(valid_records)} invalid_records={len(invalid_records)}")
+    end_time = datetime.now(timezone.utc)
+    cache_hits_after = len(os.listdir(CACHE_DIR)) if os.path.exists(CACHE_DIR) else 0
+
+    report = {
+        "start_time": start_time.isoformat(),
+        "end_time": end_time.isoformat(),
+        "duration_seconds": (end_time - start_time).total_seconds(),
+        "pages_fetched": len(book_urls),
+        "cache_files_total": cache_hits_after,
+        "valid_records": len(valid_records),
+        "invalid_records": len(invalid_records),
+        "failed_pages": len(failed_pages),
+        "failed_page_details": failed_pages
+    }
+    with open(os.path.join(OUTPUT_DIR, "run-report.json"), "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
+
+    print(f"valid_records={len(valid_records)} invalid_records={len(invalid_records)} failed_pages={len(failed_pages)}")
 
 
 if __name__ == "__main__":
